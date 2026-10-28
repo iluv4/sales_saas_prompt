@@ -1,0 +1,6 @@
+anthropic>=2.3.0
+slack_bolt>=1.30.0
+APScheduler>=3.11,<4
+pydantic>=2.13
+python-dotenv>=1.0
+pytest>=9.0
