@@ -1,7 +1,7 @@
-# Create the Slack app from this manifest: api.slack.com/apps -> Create New App -> From a manifest
+# api.slack.com/apps -> Create New App -> From a manifest 에 이 내용을 붙여넣으면 앱이 만들어집니다.
 display_information:
   name: Sales Agent
-  description: Researches your targets, drafts personal emails, tracks calls and meetings.
+  description: 타깃을 리서치해 맞춤 이메일을 쓰고, 통화와 미팅을 기록합니다.
   background_color: "#1d2433"
 features:
   bot_user:
@@ -9,20 +9,20 @@ features:
     always_online: true
   slash_commands:
     - command: /lead
-      description: Add targets; I research them and draft personal emails
-      usage_hint: "Jane Kim, CEO of Acme Commerce, jane@acme.com"
+      description: 타깃 추가 → 리서치 + 맞춤 이메일 초안
+      usage_hint: "김지현 루미에르몰 대표 jihyun@lumieremall.co.kr"
       should_escape: false
     - command: /call
-      description: Log a call; I review it and set the next step
-      usage_hint: "Jane Kim connected wants pricing, call back Tuesday"
+      description: 통화 기록 → 요약, 코칭, 다음 할 일
+      usage_hint: "김지현 연결 견적 원함, 화요일 다시 통화"
       should_escape: false
     - command: /meeting
-      description: Book a meeting and email a calendar invite
-      usage_hint: "Jane Kim 2026-11-03 14:00 30"
+      description: 미팅 등록 + 캘린더 초대 메일
+      usage_hint: "김지현 내일 14:00 30"
       should_escape: false
     - command: /sales
-      description: "Numbers, tomorrow's plan, pipeline, leads, tasks"
-      usage_hint: "today | week | tomorrow | pipeline | lead <name> | done <id> | help"
+      description: "실적, 내일 계획, 파이프라인, 리드, 할 일"
+      usage_hint: "오늘 | 주간 | 내일 | 파이프라인 | 리드 <이름> | 완료 <번호> | 도움말"
       should_escape: false
 oauth_config:
   scopes:

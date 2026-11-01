@@ -13,27 +13,48 @@ from slack_sdk.errors import SlackApiError
 
 from . import formatting as fmt
 from .config import Settings
-from .service import STAGES, SalesService
+from .service import SalesService
 
 log = logging.getLogger(__name__)
 
-LEAD_HELP = """*Add targets* — paste one or more people in any format, e.g.
-`/lead Jane Kim, CEO of Acme Commerce, jane@acmecommerce.com, acmecommerce.com — met at Retail Summit`
-I'll research each person and company, then post a personal email draft here for you to approve."""
+LEAD_HELP = """*타깃 추가* — 한 명 또는 여러 명을 아무 형식으로나 붙여넣으세요. 예:
+`/lead 김지현 루미에르몰 대표 jihyun@lumieremall.co.kr lumieremall.co.kr — 리테일 서밋에서 만남`
+사람과 회사를 리서치한 뒤, 맞춤 이메일 초안을 여기에 올려 드릴게요. 보내기 전에 꼭 확인을 받습니다."""
 
-SALES_HELP = """*Sales agent commands*
-• `/lead <people>` — add targets; I research them and draft personal emails for your approval
-• `/call <lead> [connected|vm|na|meeting|ni] <notes>` — log a call; I review it and set the next step
-• `/meeting <lead> YYYY-MM-DD HH:MM [minutes]` — book a meeting and email a calendar invite
-• `/sales today` · `/sales week` — activity numbers (calls, connects, emails, replies, meetings)
-• `/sales tomorrow` — tomorrow's meetings, tasks and a prioritized plan
-• `/sales pipeline` — leads by stage
-• `/sales lead <lead>` — one lead's timeline
-• `/sales done <task id>` — mark a task done
-• `/sales stage <lead> <stage>` — move a lead (stages: """ + ", ".join(STAGES) + """)
-• `/sales email <lead> <address>` · `/sales phone <lead> <number>` — fix contact details
-• `/sales followups` — draft any follow-ups that are due now
-A lead can be `#12`, a full name, a company or an email. Use `Name | notes` if a name is ambiguous."""
+CALL_HELP = """*통화 기록* — `/call <리드> [결과] <메모>`
+결과: `연결` · `음성` · `부재` · `미팅` · `거절` (생략하면 메모를 보고 판단해요)
+예: `/call 김지현 연결 일본 배송비에 관심 많음, 견적 원함, 다음 주 화요일 다시 통화`"""
+
+SALES_HELP = """*세일즈 에이전트 명령어*
+• `/lead <사람들>` — 타깃 추가 → 리서치 + 맞춤 이메일 초안 (승인 후 발송)
+• `/call <리드> [연결|음성|부재|미팅|거절] <메모>` — 통화 기록 → 요약, 코칭, 다음 할 일
+• `/meeting <리드> YYYY-MM-DD HH:MM [분]` — 미팅 등록 + 캘린더 초대 메일 (`내일 14:00`도 돼요)
+• `/sales 오늘` · `/sales 주간` — 통화, 연결률, 보낸 메일, 답장, 미팅 숫자
+• `/sales 내일` — 내일 미팅, 할 일, 우선순위 계획
+• `/sales 파이프라인` — 단계별 리드
+• `/sales 리드 <리드>` — 한 사람의 전체 기록
+• `/sales 완료 <할 일 번호>` — 할 일 완료 처리
+• `/sales 단계 <리드> <단계>` — 단계 변경 (신규, 초안, 연락함, 대화중, 미팅, 성사, 종료)
+• `/sales 이메일 <리드> <주소>` · `/sales 전화 <리드> <번호>` — 연락처 수정
+• `/sales 팔로업` — 지금 보낼 차례인 팔로업 초안 만들기
+• `/sales 리포트` — 오늘의 리포트를 지금 받기
+리드는 `#12`, 이름, 회사명, 이메일로 부를 수 있어요. 이름이 겹치면 `이름 | 메모` 형식으로 쓰세요."""
+
+# Korean and English subcommands both work.
+SUBCOMMANDS = {
+    "도움말": "help", "help": "help",
+    "오늘": "today", "today": "today",
+    "주간": "week", "이번주": "week", "week": "week",
+    "파이프라인": "pipeline", "pipeline": "pipeline",
+    "내일": "tomorrow", "계획": "tomorrow", "tomorrow": "tomorrow", "plan": "tomorrow",
+    "리포트": "report", "보고서": "report", "report": "report",
+    "팔로업": "followups", "followups": "followups",
+    "리드": "lead", "lead": "lead",
+    "완료": "done", "done": "done",
+    "단계": "stage", "stage": "stage",
+    "이메일": "email", "email": "email",
+    "전화": "phone", "phone": "phone",
+}
 
 
 def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str, Callable[[], None]]]:
@@ -59,12 +80,12 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
                 respond(text=f"⚠️ {exc}")
             except Exception as exc:  # report anything unexpected back to the user
                 log.exception("Background job failed")
-                respond(text=f"⚠️ Something went wrong: {exc}")
+                respond(text=f"⚠️ 문제가 생겼어요: {exc}")
 
         pool.submit(run)
 
     def post_draft(channel: str, lead: dict[str, Any], email: dict[str, Any]) -> None:
-        post(channel, f"Email draft for {lead['name']}", fmt.draft_blocks(lead, email))
+        post(channel, f"{lead['name']}님 이메일 초안", fmt.draft_blocks(lead, email))
 
     # ------------------------------------------------------------ /lead
 
@@ -74,23 +95,23 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
         if not text:
             ack(LEAD_HELP)
             return
-        ack("🔎 Got it. Reading your targets and researching each one; drafts will show up here.")
+        ack("🔎 받았어요. 한 명씩 리서치하고 있어요. 이메일 초안이 곧 여기에 올라옵니다.")
         channel = command["channel_id"]
 
         def work() -> None:
             results = service.add_leads(text, channel)
             if not results:
-                respond(text="I couldn't find any people in that message. Include at least a name and company.")
+                respond(text="메시지에서 사람을 찾지 못했어요. 최소한 이름과 회사를 적어 주세요.")
                 return
             for lead, created in results:
                 if not created:
-                    post(channel, f"ℹ️ {fmt.lead_line(lead)} is already in the CRM (stage: {lead['stage']}).")
+                    post(channel, f"ℹ️ {fmt.lead_line(lead)}은(는) 이미 CRM에 있어요 (단계: {fmt.stage(lead['stage'])}).")
                     continue
                 try:
                     email = service.research_and_draft(lead["id"])
                 except Exception as exc:
                     log.exception("Drafting failed for lead %s", lead["id"])
-                    post(channel, f"⚠️ Saved {fmt.lead_line(lead)} but drafting failed: {exc}")
+                    post(channel, f"⚠️ {fmt.lead_line(lead)}은(는) 저장했지만 초안 작성에 실패했어요: {exc}")
                     continue
                 post_draft(channel, service.db.get("leads", lead["id"]), email)
 
@@ -110,7 +131,7 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
 
         def work() -> None:
             email, lead = service.send_email(email_id_from(body))
-            update_card(body, f"Sent to {lead['name']}", fmt.sent_blocks(lead, email, body["user"]["id"]))
+            update_card(body, f"{lead['name']}님께 발송 완료", fmt.sent_blocks(lead, email, body["user"]["id"]))
 
         background(lambda **kw: respond(replace_original=False, response_type="ephemeral", **kw), work)
 
@@ -123,7 +144,7 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
             respond(text=f"⚠️ {exc}", replace_original=False, response_type="ephemeral")
             return
         lead = service.db.get("leads", email["lead_id"])
-        update_card(body, "Draft skipped", fmt.skipped_blocks(lead, email))
+        update_card(body, "초안 건너뜀", fmt.skipped_blocks(lead, email))
 
     @app.action("regenerate_email")
     def regenerate_email(ack, body, respond):
@@ -132,7 +153,7 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
         def work() -> None:
             email = service.regenerate(email_id_from(body))
             lead = service.db.get("leads", email["lead_id"])
-            update_card(body, f"New draft for {lead['name']}", fmt.draft_blocks(lead, email))
+            update_card(body, f"{lead['name']}님 새 초안", fmt.draft_blocks(lead, email))
 
         background(lambda **kw: respond(replace_original=False, response_type="ephemeral", **kw), work)
 
@@ -160,7 +181,7 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
         def work() -> None:
             email, lead = service.send_email(meta["email_id"])
             client.chat_update(
-                channel=meta["channel"], ts=meta["ts"], text=f"Sent to {lead['name']}",
+                channel=meta["channel"], ts=meta["ts"], text=f"{lead['name']}님께 발송 완료",
                 blocks=fmt.sent_blocks(lead, email, user),
             )
 
@@ -172,10 +193,9 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
     def call_command(ack, command, respond):
         text = (command.get("text") or "").strip()
         if not text:
-            ack("Usage: `/call <lead> [connected|vm|na|meeting|ni] <what happened>`\n"
-                "e.g. `/call Jane Kim connected she likes the idea, wants pricing, call back next Tuesday`")
+            ack(CALL_HELP)
             return
-        ack("📞 Logging the call…")
+        ack("📞 통화를 기록하고 있어요…")
 
         def work() -> None:
             lead, review, task = service.log_call(text)
@@ -188,17 +208,12 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
     @app.command("/meeting")
     def meeting_command(ack, command, respond):
         text = (command.get("text") or "").strip()
-        ack("📅 Booking…")
+        ack("📅 미팅을 등록하고 있어요…")
 
         def work() -> None:
             lead, meeting, invited = service.book_meeting(text)
-            when = service.local(meeting["starts_at"])
-            invite = "Calendar invite emailed ✅" if invited else "No invite sent (no email address or SMTP not set up)"
-            respond(
-                response_type="in_channel",
-                text=f"📅 *Meeting booked* with {fmt.lead_line(lead)}\n{when:%a %Y-%m-%d %H:%M} · "
-                     f"{meeting['duration_min']} min · {invite}",
-            )
+            start = service.local(meeting["starts_at"])
+            respond(response_type="in_channel", text=fmt.meeting_text(lead, start, meeting["duration_min"], invited))
 
         background(respond, work)
 
@@ -206,28 +221,28 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
 
     @app.command("/sales")
     def sales_command(ack, command, respond):
-        words = (command.get("text") or "today").strip().split(maxsplit=1)
-        sub, rest = words[0].lower(), (words[1] if len(words) > 1 else "")
+        words = (command.get("text") or "오늘").strip().split(maxsplit=1)
+        sub, rest = SUBCOMMANDS.get(words[0].lower(), words[0].lower()), (words[1] if len(words) > 1 else "")
         today = service.today()
 
         if sub == "help":
             ack(SALES_HELP)
         elif sub == "today":
-            ack(fmt.stats_text(f"Today ({today})", service.stats(today)) + "\n\n" + fmt.agenda_text(service.agenda(today), "Still to do today"))
+            ack(fmt.stats_text(f"오늘 ({today})", service.stats(today)) + "\n\n" + fmt.agenda_text(service.agenda(today), "오늘 남은 일"))
         elif sub == "week":
             start = today - timedelta(days=6)
-            ack(fmt.stats_text(f"Last 7 days ({start} → {today})", service.stats(start, 7)))
+            ack(fmt.stats_text(f"최근 7일 ({start} ~ {today})", service.stats(start, 7)))
         elif sub == "pipeline":
             ack(fmt.pipeline_text(service.pipeline()))
-        elif sub in ("tomorrow", "plan"):
-            ack("🗓️ Putting tomorrow together…")
+        elif sub == "tomorrow":
+            ack("🗓️ 내일 일정을 정리하고 있어요…")
             background(respond, lambda: respond(text=build_plan(today + timedelta(days=1))))
         elif sub == "report":
-            ack("📊 Building the report…")
+            ack("📊 리포트를 만들고 있어요…")
             background(respond, lambda: respond(response_type="in_channel", text=build_report()))
         elif sub == "followups":
-            ack("✉️ Checking for due follow-ups…")
-            background(respond, lambda: respond(text=f"Drafted {run_followups()} follow-up(s)."))
+            ack("✉️ 보낼 차례인 팔로업을 확인하고 있어요…")
+            background(respond, lambda: respond(text=f"팔로업 초안 {run_followups()}개를 만들었어요."))
         else:
             try:
                 ack(run_sales_edit(sub, rest))
@@ -238,23 +253,28 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
         if sub == "lead":
             return fmt.lead_detail_text(service.lead_detail(rest), service.local)
         if sub == "done":
-            task = service.complete_task(int(rest.strip().lstrip("#")))
-            return f"✅ Done: {task['title']}"
+            number = rest.strip().lstrip("#")
+            if not number.isdigit():
+                raise ValueError("할 일 번호를 적어 주세요. 예: `/sales 완료 12`")
+            task = service.complete_task(int(number))
+            return f"✅ 완료: {task['title']}"
         if sub == "stage":
             lead, stage = service.split_lead_ref(rest)
             changed = service.set_stage(lead["id"], stage.strip().lower(), force=True)
-            return f"{fmt.lead_line(lead)} → *{stage.strip().lower()}*" if changed else "Stage unchanged."
+            lead = service.db.get("leads", lead["id"])
+            return f"{fmt.lead_line(lead)} → *{fmt.stage(lead['stage'])}*" if changed else "단계가 그대로예요."
         if sub in ("email", "phone"):
             lead = service.update_contact(rest, sub)
-            return f"Updated {sub} for {fmt.lead_line(lead)}: {lead[sub]}"
+            label = "이메일" if sub == "email" else "전화번호"
+            return f"{fmt.lead_line(lead)}의 {label}를 바꿨어요: {lead[sub]}"
         return SALES_HELP
 
     # ------------------------------------------------------------ jobs (also used by the scheduler)
 
     def build_plan(day) -> str:
         agenda, plan = service.plan_for(day)
-        text = fmt.agenda_text(agenda, "Tomorrow")
-        return text + ("\n\n*Plan*\n" + plan if plan else "")
+        text = fmt.agenda_text(agenda, "내일")
+        return text + ("\n\n*계획*\n" + plan if plan else "")
 
     def build_report() -> str:
         today = service.today()
@@ -263,9 +283,9 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
             f"• {fmt.esc(c['name'])} — {fmt.OUTCOME_LABEL.get(c['outcome'], c['outcome'])}: {fmt.esc(c['summary'])}" for c in reviews
         )
         parts = [
-            "📊 *Daily sales report*",
-            fmt.stats_text(f"Today ({today})", service.stats(today)),
-            ("*Today's calls*\n" + calls) if calls else "",
+            "📊 *오늘의 영업 리포트*",
+            fmt.stats_text(f"오늘 ({today})", service.stats(today)),
+            ("*오늘 통화*\n" + calls) if calls else "",
             build_plan(today + timedelta(days=1)),
         ]
         return "\n\n".join(p for p in parts if p)
@@ -273,7 +293,7 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
     def run_followups() -> int:
         drafts = service.draft_due_followups()
         for lead, email in drafts:
-            post(lead["slack_channel"], f"Follow-up draft for {lead['name']}", fmt.draft_blocks(lead, email, show_research=False))
+            post(lead["slack_channel"], f"{lead['name']}님 팔로업 초안", fmt.draft_blocks(lead, email, show_research=False))
         return len(drafts)
 
     def job_followups() -> None:
@@ -284,13 +304,13 @@ def create_app(service: SalesService, settings: Settings) -> tuple[App, dict[str
             latest = replies[-1]
             post(
                 lead["slack_channel"],
-                f"💬 {lead['name']} replied!",
-                [fmt.section(f"💬 *Reply from* {fmt.lead_line(lead)}\n*{fmt.esc(latest['subject'])}*\n> {fmt.esc(latest['snippet'])}\n"
-                             f"Follow-ups stopped. Book it with `/meeting #{lead['id']} YYYY-MM-DD HH:MM`.")],
+                f"💬 {lead['name']}님이 답장했어요!",
+                [fmt.section(f"💬 *답장 도착* — {fmt.lead_line(lead)}\n*{fmt.esc(latest['subject'])}*\n> {fmt.esc(latest['snippet'])}\n"
+                             f"팔로업 메일은 멈췄어요. `/meeting #{lead['id']} YYYY-MM-DD HH:MM`으로 미팅을 잡으세요.")],
             )
 
     def job_daily_report() -> None:
-        post(settings.slack_channel_id, "Daily sales report", [fmt.section(chunk) for chunk in _chunks(build_report())])
+        post(settings.slack_channel_id, "오늘의 영업 리포트", [fmt.section(chunk) for chunk in _chunks(build_report())])
 
     return app, {"followups": job_followups, "replies": job_replies, "daily_report": job_daily_report}
 

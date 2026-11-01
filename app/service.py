@@ -27,6 +27,17 @@ OUTCOME_ALIASES = {
     "meeting": "meeting_booked", "booked": "meeting_booked", "meeting_booked": "meeting_booked",
     "not-interested": "not_interested", "not_interested": "not_interested", "ni": "not_interested",
     "wrong-number": "wrong_number", "wrong": "wrong_number",
+    # Korean
+    "연결": "connected", "통화": "connected", "통화함": "connected",
+    "음성": "voicemail", "음성메시지": "voicemail", "음메": "voicemail",
+    "부재": "no_answer", "부재중": "no_answer", "안받음": "no_answer",
+    "미팅": "meeting_booked", "미팅확정": "meeting_booked",
+    "거절": "not_interested", "관심없음": "not_interested",
+    "잘못된번호": "wrong_number", "결번": "wrong_number",
+}
+STAGE_ALIASES = {
+    "신규": "new", "초안": "drafted", "연락함": "contacted", "대화중": "engaged", "대화": "engaged",
+    "미팅": "meeting_booked", "미팅예약": "meeting_booked", "성사": "won", "계약": "won", "종료": "lost", "실패": "lost",
 }
 CONNECT_OUTCOMES = {"connected", "meeting_booked", "not_interested"}
 
@@ -36,7 +47,7 @@ class LeadNotFound(LookupError):
         self.ref = ref
         self.suggestions = suggestions
         names = ", ".join(f"#{l['id']} {l['name']} ({l['company']})" for l in suggestions)
-        super().__init__(f"No lead matches '{ref}'." + (f" Did you mean: {names}?" if names else ""))
+        super().__init__(f"'{ref}'에 해당하는 리드를 찾지 못했어요." + (f" 혹시 이 중에 있나요? {names}" if names else ""))
 
 
 def iso(dt: datetime) -> str:
@@ -137,17 +148,18 @@ class SalesService:
     def update_contact(self, text: str, field: str) -> dict[str, Any]:
         """'/sales email <lead> jane@acme.com' or '/sales phone <lead> +82 10 ...'."""
         if field not in ("email", "phone"):
-            raise ValueError(f"Can't update '{field}'.")
+            raise ValueError(f"'{field}' 항목은 바꿀 수 없어요.")
         lead, value = self.split_lead_ref(text)
         if not value:
-            raise ValueError(f"Give the new {field} after the lead.")
+            raise ValueError("리드 이름 뒤에 새 값을 적어 주세요.")
         self.db.update("leads", lead["id"], **{field: value.strip(), "updated_at": iso(self.now())})
         return self.db.get("leads", lead["id"])
 
     def set_stage(self, lead_id: int, stage: str, force: bool = False) -> bool:
         """Move a lead forward in the pipeline (never backwards unless forced). won/lost always apply."""
+        stage = STAGE_ALIASES.get(stage.replace(" ", ""), stage)
         if stage not in STAGE_RANK:
-            raise ValueError(f"Unknown stage '{stage}'. Use one of: {', '.join(STAGES)}")
+            raise ValueError(f"'{stage}'은(는) 없는 단계예요. 다음 중 하나를 쓰세요: {', '.join(STAGE_ALIASES)} (또는 {', '.join(STAGES)})")
         lead = self.db.get("leads", lead_id)
         current = lead["stage"]
         if current == stage:
@@ -177,7 +189,7 @@ class SalesService:
     def complete_task(self, task_id: int) -> dict[str, Any]:
         task = self.db.get("tasks", task_id)
         if not task:
-            raise LookupError(f"No task #{task_id}.")
+            raise LookupError(f"{task_id}번 할 일이 없어요.")
         self.db.update("tasks", task_id, status="done", done_at=iso(self.now()))
         return task
 
@@ -200,7 +212,7 @@ class SalesService:
             raw_research = f"Homepage text of {lead['website']}:\n{site}" if site else ""
         draft = self.ai.draft_intro(lead, raw_research)
         hooks = "\n".join(f"• {hook}" for hook in draft.personalization_hooks)
-        research = f"{draft.company_summary}\n\n{draft.person_insights}\n\nHooks:\n{hooks}".strip()
+        research = f"{draft.company_summary}\n\n{draft.person_insights}\n\n개인화 포인트:\n{hooks}".strip()
         self.db.update("leads", lead_id, research=research, updated_at=iso(self.now()))
         self.set_stage(lead_id, "drafted")
         email_id = self.db.insert(
@@ -229,9 +241,10 @@ class SalesService:
     def _draft(self, email_id: int) -> dict[str, Any]:
         email = self.db.get("emails", email_id)
         if not email:
-            raise LookupError(f"No email #{email_id}.")
+            raise LookupError(f"{email_id}번 이메일이 없어요.")
         if email["status"] != "draft":
-            raise ValueError(f"This email was already {email['status']}.")
+            done = "발송" if email["status"] == "sent" else "건너뛰기"
+            raise ValueError(f"이미 {done} 처리된 이메일이에요.")
         return email
 
     def emails_sent_today(self) -> int:
@@ -244,9 +257,9 @@ class SalesService:
         email = self._draft(email_id)
         lead = self.db.get("leads", email["lead_id"])
         if not lead["email"]:
-            raise ValueError(f"{lead['name']} has no email address. Add one with `/sales email #{lead['id']} name@company.com`.")
+            raise ValueError(f"{lead['name']}님의 이메일 주소가 없어요. `/sales 이메일 #{lead['id']} name@company.com`으로 추가하세요.")
         if self.emails_sent_today() >= self.s.daily_send_limit:
-            raise ValueError(f"Daily send limit reached ({self.s.daily_send_limit}). It protects your domain's reputation.")
+            raise ValueError(f"오늘 발송 한도({self.s.daily_send_limit}통)에 도달했어요. 도메인 평판을 지키기 위한 제한이에요.")
         message_id = self.mailer.send(lead["email"], email["subject"], email["body"], in_reply_to=email["in_reply_to"])
         now = iso(self.now())
         self.db.update("emails", email_id, status="sent", message_id=message_id, sent_at=now)
@@ -263,10 +276,10 @@ class SalesService:
         intervals = self.s.followup_intervals
         if step < len(intervals):
             due = self.today() + timedelta(days=intervals[step])
-            self.add_task(lead["id"], "followup_email", f"Follow-up email #{step + 1} to {lead['name']}", due, step=step + 1)
+            self.add_task(lead["id"], "followup_email", f"{lead['name']}님께 팔로업 메일 #{step + 1}", due, step=step + 1)
         else:
             due = self.today() + timedelta(days=self.s.call_after_days)
-            self.add_task(lead["id"], "call", f"Call {lead['name']} ({lead['company']}): no reply after {step + 1} emails", due)
+            self.add_task(lead["id"], "call", f"{lead['name']}님({lead['company']})께 전화: 메일 {step + 1}통에 답장 없음", due)
 
     def draft_due_followups(self) -> list[tuple[dict[str, Any], dict[str, Any]]]:
         """Turn follow-up tasks that are due into drafts waiting for approval."""
@@ -292,7 +305,7 @@ class SalesService:
     def _draft_followup(self, lead: dict[str, Any], step: int) -> dict[str, Any]:
         sent = self.db.query("SELECT * FROM emails WHERE lead_id = ? AND status = 'sent' ORDER BY sent_at", (lead["id"],))
         if not sent:
-            raise ValueError(f"No email has been sent to {lead['name']} yet.")
+            raise ValueError(f"{lead['name']}님께 아직 보낸 메일이 없어요.")
         final = step >= len(self.s.followup_intervals)
         draft = self.ai.draft_followup(lead, sent, step, final)
         first_subject = sent[0]["subject"]
@@ -326,7 +339,7 @@ class SalesService:
             )
             self.set_stage(lead["id"], "engaged")
             self.cancel_tasks(lead["id"], ("followup_email",))
-            self.add_task(lead["id"], "reply", f"Reply to {lead['name']} and book a meeting", self.today())
+            self.add_task(lead["id"], "reply", f"{lead['name']}님 답장에 회신하고 미팅 잡기", self.today())
             results.append((self.db.get("leads", lead["id"]), found))
         return results
 
@@ -343,6 +356,7 @@ class SalesService:
         notes = rest.strip(" -:,")
         review = self.ai.review_call(lead, notes, hint, self._history_text(lead["id"]))
         outcome = hint or review.outcome
+        review = review.model_copy(update={"outcome": outcome})  # the rep's own choice wins over Claude's guess
         now = iso(self.now())
         self.db.insert(
             "activities", lead_id=lead["id"], type="call", outcome=outcome, notes=notes, summary=review.summary,
@@ -376,14 +390,18 @@ class SalesService:
     # ------------------------------------------------------------ meetings
 
     def parse_when(self, text: str) -> tuple[str, datetime, int]:
-        """'<lead> 2026-11-03 14:00 [45]' or '<lead> tomorrow 10:30' -> (lead text, local start, minutes)."""
-        match = re.search(r"\s(today|tomorrow|\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2})(?:\s+(\d+))?\s*$", " " + text.strip())
+        """'<lead> 2026-11-03 14:00 [45]' or '<lead> 내일 10:30' -> (lead text, local start, minutes)."""
+        match = re.search(
+            r"\s(today|tomorrow|오늘|내일|모레|\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2})(?:\s+(\d+)분?)?\s*$", " " + text.strip()
+        )
         if not match:
-            raise ValueError("Use: `/meeting <lead> YYYY-MM-DD HH:MM [minutes]` (or `tomorrow 14:00`).")
+            raise ValueError("이렇게 써 주세요: `/meeting <리드> YYYY-MM-DD HH:MM [분]` (또는 `내일 14:00`)")
         day_word, clock, minutes = match.groups()
-        if day_word == "today":
+        if day_word in ("today", "오늘"):
             day = self.today()
-        elif day_word == "tomorrow":
+        elif day_word == "모레":
+            day = self.today() + timedelta(days=2)
+        elif day_word in ("tomorrow", "내일"):
             day = self.today() + timedelta(days=1)
         else:
             day = date.fromisoformat(day_word)
@@ -396,14 +414,14 @@ class SalesService:
         ref, start, minutes = self.parse_when(text)
         lead = self.find_lead(ref) if ref else None
         if not lead:
-            raise ValueError("Tell me who the meeting is with: `/meeting <lead> YYYY-MM-DD HH:MM`.")
+            raise ValueError("누구와의 미팅인지 적어 주세요: `/meeting <리드> YYYY-MM-DD HH:MM`")
         title = f"{self.s.sender_company or 'Intro'} <> {lead['company'] or lead['name']}"
         now = iso(self.now())
         meeting_id = self.db.insert(
             "meetings", lead_id=lead["id"], starts_at=iso(start), duration_min=minutes, title=title, created_at=now
         )
         self.db.insert(
-            "activities", lead_id=lead["id"], type="meeting_booked", summary=f"{title} on {start:%Y-%m-%d %H:%M}", created_at=now
+            "activities", lead_id=lead["id"], type="meeting_booked", summary=f"{title} · {start:%Y-%m-%d %H:%M}", created_at=now
         )
         self.set_stage(lead["id"], "meeting_booked")
         self.cancel_tasks(lead["id"], ("followup_email", "reply"))
@@ -415,15 +433,29 @@ class SalesService:
                 organizer_name=self.s.sender_name, organizer_email=self.s.sender_email,
                 attendee_name=lead["name"], attendee_email=lead["email"], now=self.now(),
             )
-            body = self.compose_body(
-                f"Hi {lead['name'].split()[0]},\n\nThanks for making the time. I've sent a calendar invite for "
-                f"{start:%A, %B %d at %H:%M} ({self.s.timezone.key})"
-                + (f".\n\nJoin here: {self.s.meeting_link}" if self.s.meeting_link else ".")
-                + "\n\nLooking forward to it."
-            )
-            self.mailer.send(lead["email"], f"Invitation: {title}", body, ics=ics)
+            body, subject = self._invite_email(lead, start, title)
+            self.mailer.send(lead["email"], subject, body, ics=ics)
             invite_sent = True
         return self.db.get("leads", lead["id"]), self.db.get("meetings", meeting_id), invite_sent
+
+    def _invite_email(self, lead: dict[str, Any], start: datetime, title: str) -> tuple[str, str]:
+        link = self.s.meeting_link
+        if self.s.email_language.lower().startswith(("korean", "ko", "한국")):
+            weekday = "월화수목금토일"[start.weekday()]
+            text = (
+                f"{lead['name']} {lead['title'] or '님'}, 안녕하세요.\n\n시간 내주셔서 감사합니다. "
+                f"{start:%m월 %d일}({weekday}) {start:%H:%M} 미팅 초대장을 보내드립니다."
+                + (f"\n\n참여 링크: {link}" if link else "")
+                + "\n\n그때 뵙겠습니다."
+            )
+            return self.compose_body(text), f"[미팅 초대] {title}"
+        text = (
+            f"Hi {lead['name'].split()[0]},\n\nThanks for making the time. I've sent a calendar invite for "
+            f"{start:%A, %B %d at %H:%M} ({self.s.timezone.key})"
+            + (f".\n\nJoin here: {link}" if link else ".")
+            + "\n\nLooking forward to it."
+        )
+        return self.compose_body(text), f"Invitation: {title}"
 
     # ------------------------------------------------------------ reporting
 

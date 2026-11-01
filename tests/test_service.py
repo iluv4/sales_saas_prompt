@@ -146,11 +146,11 @@ def test_full_email_sequence(env):
 def test_cannot_send_twice_or_over_limit(env):
     emails = add_and_draft(env, *[lead(name=f"P{i}", company=f"Co{i}", email=f"p{i}@co{i}.com") for i in range(6)])
     env.service.send_email(emails[0]["id"])
-    with pytest.raises(ValueError, match="already sent"):
+    with pytest.raises(ValueError, match="이미 발송"):
         env.service.send_email(emails[0]["id"])
     for e in emails[1:5]:
         env.service.send_email(e["id"])
-    with pytest.raises(ValueError, match="Daily send limit"):
+    with pytest.raises(ValueError, match="발송 한도"):
         env.service.send_email(emails[5]["id"])
 
 
@@ -169,9 +169,10 @@ def test_log_call_matches_name_prefix_and_alias(env):
     (email,) = add_and_draft(env, lead())
     env.service.send_email(email["id"])
     l, review, task = env.service.log_call("Jane Kim vm left a message about Q4")
-    assert review.outcome == "connected"  # the fake AI's view...
     call = env.service.db.one("SELECT * FROM activities WHERE type = 'call'")
-    assert call["outcome"] == "voicemail" and call["notes"] == "left a message about Q4"  # ...but the rep's choice wins
+    # The fake AI says "connected", but the rep's own choice wins everywhere, including the Slack message.
+    assert call["outcome"] == "voicemail" and review.outcome == "voicemail" and call["notes"] == "left a message about Q4"
+    assert "음성메시지" in fmt.call_text(l, review, task)
     assert l["stage"] == "contacted"  # voicemail doesn't move the stage or stop follow-ups
     assert env.service.db.scalar("SELECT count(*) FROM tasks WHERE kind = 'followup_email' AND status = 'open'") == 1
     assert task["due_date"] == "2026-10-30"
@@ -225,6 +226,20 @@ def test_bad_meeting_time(env):
         env.service.book_meeting("Jane next week")
 
 
+def test_korean_commands(env):
+    (email,) = add_and_draft(env, lead(name="김지현", company="루미에르몰", email="jihyun@lumiere.kr", title="대표"))
+    env.service.send_email(email["id"])
+    l, review, task = env.service.log_call("김지현 부재 오후에 다시")
+    assert review.outcome == "no_answer"
+    l, meeting, invited = env.service.book_meeting("김지현 내일 15:00 45분")
+    assert meeting["starts_at"] == "2026-10-29T06:00:00+00:00" and meeting["duration_min"] == 45
+    invite = env.mailer.sent[-1]
+    assert invite["subject"].startswith("[미팅 초대]") and "10월 29일(목) 15:00" in invite["body"]
+    assert env.service.set_stage(l["id"], "성사", force=True) and env.service.find_lead("#1")["stage"] == "won"
+    with pytest.raises(ValueError, match="없는 단계"):
+        env.service.set_stage(l["id"], "아무거나")
+
+
 def test_stats_plan_and_dashboard(env):
     emails = add_and_draft(env, lead(), lead(name="Tom Choi", company="Beta", email="tom@beta.com"))
     for e in emails:
@@ -249,15 +264,15 @@ def test_stats_plan_and_dashboard(env):
     assert any("Tom Choi" in t["title"] for t in later["tasks"])
 
     page = render(env.service)
-    assert "Calls today" in page and "Tom Choi" in page
+    assert "오늘 통화" in page and "Tom Choi" in page
     assert fmt.stats_text("Today", s).count("*2*") >= 2
-    assert "Tomorrow" in fmt.agenda_text(agenda, "Tomorrow")
+    assert "내일" in fmt.agenda_text(agenda, "내일")
     assert "Jane Kim" in fmt.lead_detail_text(env.service.lead_detail("#1"), env.service.local)
 
 
 def test_update_contact_and_stage(env):
     add_and_draft(env, lead(email=""))
-    with pytest.raises(ValueError, match="no email address"):
+    with pytest.raises(ValueError, match="이메일 주소가 없어요"):
         env.service.send_email(1)
     l = env.service.update_contact("Jane Kim jane@acme.com", "email")
     assert l["email"] == "jane@acme.com"

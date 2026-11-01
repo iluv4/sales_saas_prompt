@@ -19,12 +19,12 @@ def _int_list(value: str) -> list[int]:
 class Settings:
     # Storage / runtime
     db_path: str = "sales.db"
-    timezone: ZoneInfo = ZoneInfo("UTC")
+    timezone: ZoneInfo = ZoneInfo("Asia/Seoul")
 
     # Claude
     model: str = "claude-opus-5-5"
     research_mode: str = "web"  # "web" = Claude web search, "site" = company homepage only
-    email_language: str = "English"
+    email_language: str = "Korean"
 
     # Who is sending, and what we sell
     sender_name: str = ""
@@ -34,7 +34,7 @@ class Settings:
     value_prop: str = ""
     booking_link: str = ""
     meeting_link: str = ""
-    opt_out_line: str = "If this isn't relevant, just reply \"no thanks\" and I won't follow up."
+    opt_out_line: str = "관련 없으시면 \"괜찮습니다\"라고만 답장 주세요. 더 연락드리지 않겠습니다."
 
     # Email (SMTP to send, IMAP to detect replies)
     smtp_host: str = ""
@@ -66,10 +66,10 @@ class Settings:
     def from_env(cls) -> "Settings":
         return cls(
             db_path=_env("DB_PATH", "sales.db"),
-            timezone=ZoneInfo(_env("TIMEZONE", "UTC")),
+            timezone=ZoneInfo(_env("TIMEZONE", "Asia/Seoul")),
             model=_env("CLAUDE_MODEL", "claude-opus-5-5"),
             research_mode=_env("RESEARCH_MODE", "web").lower(),
-            email_language=_env("EMAIL_LANGUAGE", "English"),
+            email_language=_env("EMAIL_LANGUAGE", "Korean"),
             sender_name=_env("SENDER_NAME"),
             sender_title=_env("SENDER_TITLE"),
             sender_company=_env("SENDER_COMPANY"),
@@ -93,8 +93,9 @@ class Settings:
             slack_bot_token=_env("SLACK_BOT_TOKEN"),
             slack_app_token=_env("SLACK_APP_TOKEN"),
             slack_channel_id=_env("SLACK_CHANNEL_ID"),
-            dashboard_host=_env("DASHBOARD_HOST", "127.0.0.1"),
-            dashboard_port=int(_env("DASHBOARD_PORT", "8080")),
+            # Hosting platforms (Railway, Render, Fly) hand us PORT and expect us to listen publicly.
+            dashboard_host=_env("DASHBOARD_HOST", "0.0.0.0" if _env("PORT") else "127.0.0.1"),
+            dashboard_port=int(_env("DASHBOARD_PORT") or _env("PORT") or "8080"),
             dashboard_token=_env("DASHBOARD_TOKEN"),
         )
 

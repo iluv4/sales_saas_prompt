@@ -1,116 +1,81 @@
-# Sales Agent
+# Sales Agent (세일즈 에이전트)
 
-An AI sales assistant that runs in Slack. You give it target executives (for example CEOs of e-commerce
-companies). For each person it:
+Slack에서 움직이는 AI 영업 비서입니다. 이커머스 대표처럼 만나고 싶은 사람을 알려 주면, 사람마다 이렇게 합니다.
 
-1. **Researches them**: Claude searches the web for the person and their company.
-2. **Writes a personal email** built on what it found, then posts the draft in Slack.
-   Nothing is sent until you click **Send** (or **Edit & send**).
-3. **Follows up**: if there's no reply, it drafts follow-ups on day 3 and day 7, sent in the
-   same email thread. After the last email it creates a call task.
-4. **Notices replies**: it checks your inbox, stops the follow-ups and tells you to book the meeting.
-5. **Books meetings**: `/meeting` emails the prospect a real calendar invite (.ics).
-6. **Tracks calls**: `/call` logs the outcome, and Claude summarizes the call, coaches you on it
-   and creates the next task.
-7. **Reports every evening**: today's numbers (calls, connects, emails, replies, meetings) plus
-   tomorrow's meetings, tasks and a prioritized plan.
+1. **리서치**: Claude가 그 사람과 회사를 웹에서 찾아봅니다 (최근 소식, 공개 발언, 예상되는 고민).
+2. **맞춤 이메일 초안**: 리서치를 바탕으로 개인화된 이메일을 써서 Slack에 올립니다.
+   **보내기**(또는 **수정 후 보내기**)를 누르기 전에는 절대 발송하지 않습니다.
+3. **팔로업**: 답장이 없으면 3일째, 7일째에 같은 메일 스레드로 팔로업 초안을 만들고, 마지막 메일 뒤에는 전화 할 일을 잡습니다.
+4. **답장 감지**: 받은편지함을 확인해 답장이 오면 팔로업을 멈추고 Slack으로 알려 줍니다.
+5. **미팅 예약**: `/meeting`으로 미팅을 등록하면 상대에게 캘린더 초대(.ics) 메일을 보냅니다.
+6. **통화 기록과 코칭**: `/call`로 통화 결과를 남기면 Claude가 요약하고, 잘한 점과 개선할 점, 다음 할 일을 정합니다.
+7. **매일 저녁 리포트**: 오늘의 숫자(통화, 연결률, 보낸 메일, 답장, 미팅)와 내일 미팅, 할 일, 우선순위 계획을 보냅니다.
 
-A built-in CRM (SQLite) stores everything, and a web dashboard shows it.
+모든 기록은 내장 CRM(SQLite)에 저장되고, 웹 대시보드에서 볼 수 있습니다.
 
 ```
-Slack ──/lead──▶ parse ─▶ research (web) ─▶ draft ─▶ [Send] ─▶ SMTP ─▶ follow-up tasks
-      ──/call──▶ AI call review ─▶ stage + next task          IMAP ─▶ reply ─▶ stop sequence
-      ──/meeting▶ meeting + .ics invite                        18:00 ─▶ daily report + plan
+Slack ──/lead──▶ 정리 ─▶ 웹 리서치 ─▶ 초안 ─▶ [보내기] ─▶ SMTP ─▶ 팔로업 할 일
+      ──/call──▶ AI 통화 리뷰 ─▶ 단계 + 다음 할 일          IMAP ─▶ 답장 ─▶ 팔로업 중지
+      ──/meeting▶ 미팅 + 캘린더 초대                          18:00 ─▶ 리포트 + 내일 계획
 ```
 
-## Slack commands
+**연결과 배포 방법은 [DEPLOY.md](DEPLOY.md)에 단계별로 있습니다.**
 
-| Command | What it does |
+## Slack 명령어
+
+| 명령어 | 하는 일 |
 |---|---|
-| `/lead Jane Kim, CEO of Acme Commerce, jane@acmecommerce.com` | Add one or more targets in any format (lists, CSV rows, LinkedIn snippets). Each gets a research brief and an email draft with **Send / Edit & send / Rewrite / Skip** buttons. |
-| `/call Jane Kim connected wants pricing, call back Tuesday` | Log a call. The outcome word is optional (`connected`, `vm`, `na`, `meeting`, `ni`); Claude infers it from the notes otherwise. You get a summary, what went well, one thing to improve, and the next task. |
-| `/meeting Jane Kim 2026-11-03 14:00 45` | Book a meeting (`tomorrow 10:30` works too). Emails a calendar invite and moves the lead to `meeting_booked`. |
-| `/sales today` · `/sales week` | Calls, connects and connect rate, emails sent, replies, meetings booked and held. |
-| `/sales tomorrow` | Tomorrow's meetings, tasks (overdue ones flagged), drafts waiting, and Claude's plan. |
-| `/sales report` | Posts the full daily report now. |
-| `/sales pipeline` · `/sales lead Jane Kim` | Leads by stage, or one lead's timeline. |
-| `/sales done 12` · `/sales stage Jane Kim won` | Close a task, or move a lead to another stage. |
-| `/sales email Jane Kim jane@acme.com` · `/sales phone …` | Fix contact details. |
-| `/sales followups` | Draft any follow-ups that are due right now. |
+| `/lead 김지현 루미에르몰 대표 jihyun@lumieremall.co.kr` | 한 명 또는 여러 명을 아무 형식으로 추가. 사람마다 리서치 요약과 이메일 초안이 **보내기 · 수정 후 보내기 · 다시 쓰기 · 건너뛰기** 버튼과 함께 올라옵니다. |
+| `/call 김지현 연결 견적 원함, 화요일 다시 통화` | 통화 기록. 결과(`연결`, `음성`, `부재`, `미팅`, `거절`)는 생략하면 메모를 보고 판단합니다. |
+| `/meeting 김지현 2026-11-03 14:00 45` | 미팅 등록과 캘린더 초대 메일. `내일 10:30`, `모레 15:00`도 됩니다. |
+| `/sales 오늘` · `/sales 주간` | 통화, 연결률, 보낸 메일, 답장, 잡은 미팅, 진행한 미팅 |
+| `/sales 내일` | 내일 미팅, 할 일(기한 지난 것 표시), 승인 대기 초안, 우선순위 계획 |
+| `/sales 리포트` | 오늘의 리포트를 지금 채널에 올리기 |
+| `/sales 파이프라인` · `/sales 리드 김지현` | 단계별 리드 목록, 한 사람의 전체 기록 |
+| `/sales 완료 12` · `/sales 단계 김지현 성사` | 할 일 완료, 단계 변경 |
+| `/sales 이메일 김지현 jihyun@new.kr` · `/sales 전화 …` | 연락처 수정 |
+| `/sales 팔로업` | 지금 보낼 차례인 팔로업 초안 만들기 |
 
-To name a lead, use `#12`, the full name, the company or the email. If a name is ambiguous, write `Name | notes`.
+리드는 `#12`, 이름, 회사명, 이메일로 부를 수 있습니다. 이름이 겹치면 `이름 | 메모` 형식으로 쓰세요.
+영어 명령어(`/sales today`, `/call … connected …`)도 그대로 됩니다.
 
-Pipeline stages: `new → drafted → contacted → engaged → meeting_booked → won / lost`.
+단계: `신규 → 초안 작성 → 연락함 → 대화 중 → 미팅 예약 → 성사 / 종료`
 
-## Setup (about 15 minutes)
+## 비용과 모델
 
-```bash
-pip install -r requirements.txt
-cp .env.example .env   # then fill it in (see below)
-python main.py
-```
+- Claude 호출은 모두 `claude-opus-5-5`를 씁니다 (`CLAUDE_MODEL`로 변경 가능).
+  비용이 큰 부분은 웹 리서치로, 한 사람당 최대 검색 6번과 페이지 읽기 4번을 합니다.
+  `RESEARCH_MODE=site`로 바꾸면 회사 홈페이지만 읽어서 저렴합니다.
+- 안전 필터가 요청을 거절하면 Anthropic이 권장하는 다른 모델로 자동 재시도합니다 (`fallbacks: "default"`).
 
-1. **Claude**: put an API key from console.anthropic.com in `ANTHROPIC_API_KEY`.
-2. **Slack**: at api.slack.com/apps, choose **Create New App → From a manifest** and paste
-   `slack_manifest.yml`. Install the app to your workspace.
-   - **OAuth & Permissions** gives you the bot token (`xoxb-…`): set it as `SLACK_BOT_TOKEN`.
-   - **Basic Information → App-Level Tokens**: create one with the `connections:write` scope
-     (`xapp-…`) and set it as `SLACK_APP_TOKEN`.
-   - Make a channel such as `#sales`, invite the bot, and put its ID in `SLACK_CHANNEL_ID`.
-     Daily reports, reply alerts and follow-up drafts are posted there.
-3. **Email**: with Gmail or Google Workspace, turn on 2-Step Verification, create an
-   [App Password](https://myaccount.google.com/apppasswords) and use it as `SMTP_PASSWORD`. The
-   SMTP settings send email; `IMAP_HOST` lets the agent detect replies.
-4. **Your pitch**: `SENDER_*`, `VALUE_PROP` and `BOOKING_LINK` are what Claude builds every
-   email around. Spend 5 minutes on a sharp, specific `VALUE_PROP`.
-5. Set `TIMEZONE` (for example `Asia/Seoul`) and `EMAIL_LANGUAGE` (for example `Korean`).
+## 지켜야 할 것
 
-The dashboard runs at `http://127.0.0.1:8080`. If you expose it beyond localhost, set `DASHBOARD_TOKEN`
-and open `/?token=…`.
+- **모든 이메일은 사람이 승인해야 나갑니다.** 이 방식이 품질을 지키고 스팸 신고를 줄입니다.
+- 모든 이메일 끝에 수신 거부 문구와 `List-Unsubscribe` 헤더가 붙습니다. 거절한 사람은 `종료` 단계로 옮기세요.
+- 한국의 정보통신망법은 영리 목적 광고성 메일에 사전 동의나 “(광고)” 표시를 요구할 수 있습니다.
+  미국(CAN-SPAM), 유럽(GDPR) 등 받는 사람 국가의 규정도 확인하세요.
+- `DAILY_SEND_LIMIT`(기본 40통)는 도메인 평판을 지키기 위한 제한입니다. SPF, DKIM, DMARC가 설정된 도메인을 쓰세요.
+- Claude는 사실을 지어내지 않도록 지시받지만, 동명이인을 찾을 수도 있습니다. **보내기 전에 리서치와 초안을 꼭 읽어 보세요.**
 
-Socket Mode means you don't need a public URL. It runs on a laptop, a small VM or any always-on box.
-The scheduler (follow-ups at 09:00, reply checks every 15 minutes, report at 18:00) only runs while
-the process is running.
-
-## Costs and models
-
-- Every Claude call uses `claude-opus-5-5`; you can change it with `CLAUDE_MODEL`. Calls are cheap
-  except web research: each `/lead` person does up to 6 web searches and 4 page fetches. To save
-  money, set `RESEARCH_MODE=site` so only the company homepage is read.
-- Requests opt into Anthropic's server-side fallback (`fallbacks: "default"`). If a safety
-  classifier declines a request, it is retried on the recommended fallback model rather than failing.
-
-## Good practice, and staying legal
-
-- **A human approves every email.** The agent never sends on its own. Keep it that way: it is
-  what keeps quality high and complaints low.
-- Every email ends with an opt-out line and a `List-Unsubscribe` header. Respect opt-outs: move
-  those leads to `lost`.
-- Cold email laws differ by country: CAN-SPAM in the US, GDPR/PECR in Europe, and the Information
-  and Communications Network Act in Korea, which can require prior consent and an "(광고)" label
-  on commercial email. Check what applies to your recipients before you send at volume.
-- `DAILY_SEND_LIMIT` (40 by default) protects your domain's reputation. Use a domain with
-  SPF, DKIM and DMARC set up, and warm up new mailboxes slowly.
-- Claude is told never to invent facts, but **read the research and the draft before you click
-  Send**. Web results can be about the wrong person with the same name.
-
-## Project layout
+## 코드 구조
 
 ```
-main.py              start Slack (Socket Mode) + scheduler + dashboard
-app/service.py       the sales workflow: leads, cadence, calls, meetings, stats (no Slack code)
-app/ai.py            Claude prompts and structured outputs
-app/slack_app.py     slash commands, approval buttons, edit modal, scheduled jobs
-app/mailer.py        SMTP send, IMAP reply detection, calendar invites
-app/db.py            SQLite schema (leads, emails, activities, meetings, tasks)
-app/dashboard.py     read-only web dashboard
-tests/               run with: python -m pytest
+main.py              Slack(Socket Mode) + 스케줄러 + 대시보드 시작
+app/service.py       영업 흐름 전체: 리드, 팔로업 일정, 통화, 미팅, 통계 (Slack 코드 없음)
+app/ai.py            Claude 프롬프트와 구조화된 출력
+app/slack_app.py     슬래시 명령어, 승인 버튼, 수정 창, 예약 작업
+app/formatting.py    Slack 메시지 문구 (한국어)
+app/mailer.py        SMTP 발송, IMAP 답장 확인, 캘린더 초대
+app/db.py            SQLite 스키마 (리드, 이메일, 활동, 미팅, 할 일)
+app/dashboard.py     웹 대시보드
+Dockerfile           서버 배포용
+tests/               테스트: python -m pytest
 ```
 
-## Ideas for next steps
+## 다음에 해볼 만한 것
 
-- Sync with HubSpot/Pipedrive instead of (or alongside) SQLite.
-- Use Google Calendar's API to suggest free slots and create the event directly.
-- Pull prospect lists from Apollo or LinkedIn Sales Navigator exports.
-- Add call recording and transcription (for example Gong or a dialer) so `/call` notes fill in automatically.
-- Add login and multiple workspaces to turn this into a multi-user SaaS.
+- HubSpot, Pipedrive 같은 CRM과 동기화
+- Google Calendar API로 빈 시간을 찾아 바로 일정 생성
+- Apollo, LinkedIn Sales Navigator에서 받은 리스트 가져오기
+- 통화 녹음과 받아쓰기를 연결해 `/call` 메모 자동 입력
+- 로그인과 여러 팀 지원을 붙여 SaaS로 확장

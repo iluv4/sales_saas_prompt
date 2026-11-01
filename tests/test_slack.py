@@ -43,16 +43,17 @@ def test_sales_commands_ack_with_text(bolt):
     assert sorted(jobs) == ["daily_report", "followups", "replies"]
 
     response = command(app, "/sales", "")
-    assert response.status == 200 and "Today (2026-10-28)" in response.body
+    assert response.status == 200 and "오늘 (2026-10-28)" in response.body
 
-    response = command(app, "/sales", "pipeline")
-    assert "drafted* — 1" in response.body
+    response = command(app, "/sales", "파이프라인")
+    assert "초안 작성 — 1명" in response.body
+    assert "초안 작성 — 1명" in command(app, "/sales", "pipeline").body  # English still works
 
-    response = command(app, "/sales", "stage Jane Kim won")
-    assert "won" in response.body and service.find_lead("#1")["stage"] == "won"
+    response = command(app, "/sales", "단계 Jane Kim 성사")
+    assert "성사" in response.body and service.find_lead("#1")["stage"] == "won"
 
-    response = command(app, "/sales", "done 999")
-    assert "No task #999" in response.body
-
-    response = command(app, "/lead", "")
-    assert "Add targets" in response.body
+    assert "999번 할 일이 없어요" in command(app, "/sales", "완료 999").body
+    assert "할 일 번호를 적어 주세요" in command(app, "/sales", "완료 abc").body
+    assert "타깃 추가" in command(app, "/lead", "").body
+    assert "통화 기록" in command(app, "/call", "").body
+    assert "/sales 내일" in command(app, "/sales", "도움말").body
